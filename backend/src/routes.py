@@ -7,7 +7,8 @@ from .auth import DomainError, allow, current_user, login
 from .config import ARTIFACT_DIR, Session, engine, redis
 from .constants import Role
 from .models import AuditEntry, EnergyReview, LoadPlan, ProductionShift
-from .schemas import CloseReview, CorrectRun, Login, OpenShift, RecordReading, RecordRun, RequestPlan, VerifySpike
+from .schemas import (CloseReview, CorrectRun, Login, OpenShift, RecordReading, RecordRun, RequestPlan,
+                      SetBaseline, VerifySpike)
 from .views import fields, meter_view, plan_view, review_view, run_view, shift_view, user_view
 
 router = APIRouter()
@@ -124,6 +125,14 @@ def evidence(plan_id: int, _user=Depends(current_user)):
             raise DomainError('evidence_unavailable', '估计证据尚未生成', 404)
         return FileResponse(ARTIFACT_DIR / plan.evidence_file, media_type='application/json',
                             filename=f'steam-plan-{plan.id}.json')
+
+
+@router.post('/plans/{plan_id}/baselines/{end_read_id}')
+def set_baseline(plan_id: int, end_read_id: int, data: SetBaseline, user=Depends(supervisor)):
+    with Session.begin() as db:
+        plan = planning.get_plan(db, plan_id, lock=True)
+        planning.set_manual_baseline(db, plan, end_read_id, data, user)
+        return plan_view(db, plan)
 
 
 @router.post('/plans/{plan_id}/approve', status_code=201)

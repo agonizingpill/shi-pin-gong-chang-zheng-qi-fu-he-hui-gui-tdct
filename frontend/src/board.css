@@ -109,6 +109,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: .88; }
 .legend span::before { display: inline-block; content: ''; margin-right: 6px; width: 13px; height: 8px; background: var(--bar); }
 .legend span:nth-child(2)::before { background: var(--ink); vertical-align: middle; height: 2px; }
 .legend span:nth-child(3)::before { background: var(--ink-red); }
+.legend span:nth-child(4)::before { background: transparent; border: 1px dashed var(--muted); }
+.baseline-tag { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border: 1px solid var(--rule); color: var(--muted); margin-left: 4px; }
+.baseline-tag.fitted { background: var(--olive); color: var(--ink); }
+.baseline-tag.manual { background: var(--red-soft); color: var(--ink-red); border-color: var(--ink-red); }
+.baseline-tag.pending { background: transparent; color: var(--ink-red); border-color: var(--ink-red); border-style: dashed; }
+.baseline-note { display: block; color: var(--muted); font-size: .72rem; margin-top: 2px; }
+.baseline-forms { margin-top: 12px; border-top: 1px solid var(--rule); padding-top: 10px; }
+.baseline-forms h3 { margin-bottom: 4px; }
+.baseline-form { border-top: 1px dashed var(--rule); padding-top: 8px; }
+.baseline-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: .84rem; }
+.baseline-head span { color: var(--muted); }
 .features { padding: 0; list-style: none; }
 .features li, .metrics div { display: flex; justify-content: space-between; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: .83rem; }
 .features i { margin-left: 5px; font: 600 .7rem var(--sans); color: var(--ink-red); }

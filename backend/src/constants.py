@@ -30,6 +30,12 @@ class SpikeFinding(StrEnum):
     INSTRUMENT_SUSPECT = 'instrument_suspect'
 
 
+class BaselineSource(StrEnum):
+    PENDING = 'pending'
+    FITTED = 'fitted'
+    MANUAL = 'manual'
+
+
 class Equipment(StrEnum):
     RETORT = 'RET-01'
     CIP = 'CIP-02'

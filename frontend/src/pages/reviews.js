@@ -1,4 +1,4 @@
-import {FINDING, REVIEW} from '../constants.js';
+import {BASELINE, FINDING, REVIEW} from '../constants.js';
 import {esc, clock, number, options} from '../utils.js';
 import {feedback, heading, notice, report, shiftStamp, status} from '../components/ui.js';
 
@@ -16,7 +16,7 @@ function spikeSlip(review, spike, mayReview) {
 }
 
 function reviewDetail(review, role) {
-  const result = review.plan.result;
+  const result = review.baselines || review.plan.result;
   const pending = review.spikes.filter(spike => !spike.finding).length;
   const mayReview = role === 'supervisor' && review.state === 'pending';
   return `<section class="review-paper"><div class="sheet-header"><div><p class="eyebrow">能效班后会 / 复核单 ${String(review.id).padStart(3, '0')}</p>
@@ -25,6 +25,8 @@ function reviewDetail(review, role) {
       ${review.spikes.map(spike => spikeSlip(review, spike, mayReview)).join('') || notice('本次无尖峰', '可结合小时曲线完成节能复核结案。')}</section>
     <section class="review-brief">${report('结案交接', '')}<dl class="metrics"><div><dt>班次实耗</dt><dd>${number(result.observed_kg)} kg</dd></div>
       <div><dt>班次基线</dt><dd>${number(result.baseline_kg)} kg</dd></div><div><dt>本班耗汽偏差</dt><dd>${number(result.excess_kg)} kg</dd></div></dl>
+      <details class="table-fold"><summary>签批锁定的逐小时基线</summary><table><thead><tr><th>时点</th><th class="num">实耗 kg</th><th class="num">基线 kg</th><th>来源</th></tr></thead><tbody>${result.profile.map(row =>
+        `<tr><td>${clock(row.start)}</td><td class="num">${number(row.observed_kg)}</td><td class="num">${number(row.baseline_kg)}</td><td>${esc(BASELINE[row.source || 'fitted'])}</td></tr>`).join('')}</tbody></table></details>
       ${review.state === 'closed' ? `<div class="conclusion"><h3>复核结论</h3><p>${esc(review.conclusion)}</p><h3>后续措施</h3><p>${esc(review.follow_up)}</p></div>` :
        (mayReview ? `<form class="fields" data-path="/reviews/${review.id}/close"><label>复核结论<textarea name="conclusion" minlength="4" maxlength="500" placeholder="填写班次耗汽偏差判断" required></textarea></label>
        <label>后续措施<textarea name="follow_up" minlength="4" maxlength="500" placeholder="下一班应检查或调整什么" required></textarea></label>

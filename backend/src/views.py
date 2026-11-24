@@ -2,7 +2,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 
 from .models import EnergyReview, ProductionShift, SteamMeter, User
-from .planning import get_plan, get_spikes
+from .planning import get_plan, get_spikes, plan_outcome
 from .shift_work import boundaries, get_readings, get_runs
 
 
@@ -37,10 +37,21 @@ def shift_view(db, shift, detail=False):
 
 def plan_view(db, plan):
     shift = db.get(ProductionShift, plan.shift_id)
-    result = fields(plan, 'id shift_id title revision state requested_at approved_at input_sha256 result error attempts')
+    result = fields(plan, 'id shift_id title revision state requested_at approved_at input_sha256 error attempts')
     review_id = db.scalar(select(EnergyReview.id).where(EnergyReview.plan_id == plan.id))
+    outcome = plan_outcome(db, plan)
+    if review_id is not None:
+        locked = db.get(EnergyReview, review_id).baselines
+        if locked:
+            # Once signed off, the review sheet's snapshot wins for the baseline set,
+            # while the model sections (features, metrics, sample) stay visible.
+            outcome = {**(outcome or {}), **locked}
+        else:
+            # Sheets opened before baseline snapshots were stored keep the values
+            # they were signed with; their result is not reclassified.
+            outcome = plan.result
     result.update(shift=fields(shift, 'code line product starts_at ends_at'), evidence=bool(plan.evidence_file),
-                  review_id=review_id)
+                  review_id=review_id, result=outcome)
     return result
 
 
@@ -56,7 +67,12 @@ def spike_view(db, spike):
 
 
 def review_view(db, review):
+    plan = get_plan(db, review.plan_id)
     result = fields(review, 'id plan_id state opened_at closed_at conclusion follow_up')
-    result.update(plan=plan_view(db, get_plan(db, review.plan_id)),
-                  spikes=[spike_view(db, row) for row in get_spikes(db, review.id)])
+    # Sheets opened before baseline snapshots existed fall back to the estimated
+    # result they were signed with rather than being reclassified today.
+    baselines = review.baselines if review.baselines is not None else plan.result
+    result.update(plan=plan_view(db, plan),
+                  spikes=[spike_view(db, row) for row in get_spikes(db, review.id)],
+                  baselines=baselines)
     return result

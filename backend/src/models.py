@@ -100,6 +100,20 @@ class LoadPlan(Base):
     attempts: Mapped[int] = mapped_column(default=0)
 
 
+class PlanBaseline(Base):
+    __tablename__ = 'plan_baselines'
+    __table_args__ = (
+        UniqueConstraint('plan_id', 'end_read_id'), CheckConstraint('baseline_kg >= 0'),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey('load_plans.id'))
+    end_read_id: Mapped[int] = mapped_column(ForeignKey('steam_meter_reads.id'))
+    baseline_kg: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    note: Mapped[str | None] = mapped_column(String(500))
+    set_by: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    set_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class EnergyReview(Base):
     __tablename__ = 'energy_reviews'
     __table_args__ = (choices('state', ReviewState),)
@@ -107,6 +121,7 @@ class EnergyReview(Base):
     plan_id: Mapped[int] = mapped_column(ForeignKey('load_plans.id'), unique=True)
     state: Mapped[str] = mapped_column(String(12), default=ReviewState.PENDING)
     opened_at: Mapped[datetime] = mapped_column(default=utc_now)
+    baselines: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     closed_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
     closed_at: Mapped[datetime | None]
     conclusion: Mapped[str | None] = mapped_column(Text)

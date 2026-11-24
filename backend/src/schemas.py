@@ -62,6 +62,11 @@ class VerifySpike(Form):
     note: Reason
 
 
+class SetBaseline(Form):
+    baseline_kg: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    note: Reason
+
+
 class CloseReview(Form):
     conclusion: Reason
     follow_up: Reason

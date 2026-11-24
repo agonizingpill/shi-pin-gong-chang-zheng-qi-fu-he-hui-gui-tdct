@@ -11,9 +11,10 @@ export async function api(path, body, method) {
   const data = await response.json();
   if (!response.ok) {
     const supplemental = data.missing?.map(time => time.replace('T', ' ')).join('、');
+    const pendingHours = data.pending_hours?.map(time => time.replace('T', ' ')).join('、');
     const fields = data.fields?.map(item => `${item.field} ${item.error}`).join('、');
     const conflict = data.asset && data.starts_at ? `${data.asset} ${data.starts_at.slice(11, 16)}–${data.ends_at.slice(11, 16)}` : '';
-    const error = new Error([data.message || '暂时无法读取台账', supplemental, fields, conflict].filter(Boolean).join('。'));
+    const error = new Error([data.message || '暂时无法读取台账', supplemental, pendingHours, fields, conflict].filter(Boolean).join('。'));
     error.status = response.status;
     throw error;
   }

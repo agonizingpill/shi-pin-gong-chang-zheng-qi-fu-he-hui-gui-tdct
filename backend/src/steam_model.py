@@ -8,6 +8,8 @@ from sklearn.feature_selection import mutual_info_regression
 from sklearn.linear_model import HuberRegressor
 from sklearn.preprocessing import StandardScaler
 
+from .baselines import combination, seen_combinations
+
 FEATURES = ['杀菌釜运行分钟', 'CIP 清洗分钟', '漂烫机运行分钟', '设备启动次数', '环境温度 °C', '班内小时序号']
 SEED = 1064
 EPSILON = 1.35
@@ -57,15 +59,33 @@ def estimate(snapshot):
     verification_threshold = max(MIN_SPIKE_KG, residual_threshold)
     historical = predict(history, selected, scaler, model)
     fitted = predict(target, selected, scaler, model)
+    familiar = seen_combinations(history)
     spikes = []
     for scope, records, baseline in [('history', history, historical), ('target', target, fitted)]:
         for row, value in zip(records, baseline):
+            if scope == 'target' and combination(row) not in familiar:
+                # No comparable history: the regressor's value is not evidence.
+                continue
             if row['kg'] - value >= verification_threshold:
                 spikes.append({'scope': scope, 'shift': row['shift'], 'start': row['start'],
                                'start_read_id': row['start_read_id'], 'end_read_id': row['end_read_id'],
                                'observed_kg': row['kg'], 'baseline_kg': round(float(value), 2)})
-    baseline_total = float(fitted.sum())
+    verified = [(row, value) for row, value in zip(target, fitted) if combination(row) in familiar]
     measured = sum(row['kg'] for row in target)
+    profile = []
+    for row, value in zip(target, fitted):
+        unseen = combination(row) not in familiar
+        entry = {'shift': row['shift'], 'start': row['start'],
+                 'start_read_id': row['start_read_id'], 'end_read_id': row['end_read_id'],
+                 'observed_kg': row['kg'], 'unseen': unseen,
+                 'baseline_kg': None if unseen else round(float(value), 2),
+                 'flagged': bool(not unseen and row['kg'] - value >= verification_threshold)}
+        if unseen:
+            # Kept for evidence only; an unfamiliar combination has no baseline.
+            entry['model_kg'] = round(float(value), 2)
+        profile.append(entry)
+    pending = any(row['unseen'] for row in profile)
+    baseline_total = None if pending else round(sum(float(value) for _row, value in verified), 2)
     return {
         'algorithm': 'Mutual Information + HuberRegressor', 'random_seed': SEED,
         'parameters': {'top_k': 3, 'n_neighbors': 3, 'epsilon': EPSILON, 'alpha': 0.0001,
@@ -76,8 +96,11 @@ def estimate(snapshot):
                     'spike_threshold_kg': round(verification_threshold, 2)},
         'features': [{'name': FEATURES[i], 'score': round(score, 4), 'selected': i in selected}
                      for i, score in ranking],
-        'profile': [{'start': row['start'], 'observed_kg': row['kg'], 'baseline_kg': round(float(value), 2),
-                     'flagged': bool(row['kg'] - value >= verification_threshold)} for row, value in zip(target, fitted)],
-        'baseline_kg': round(baseline_total, 2), 'observed_kg': round(measured, 2),
-        'excess_kg': round(measured - baseline_total, 2), 'spikes': spikes,
+        'profile': profile,
+        'baseline_kg': baseline_total, 'observed_kg': round(measured, 2),
+        'excess_kg': None if pending else round(measured - baseline_total, 2),
+        'pending_count': sum(row['unseen'] for row in profile),
+        'pending_hours': [row['start'] for row in profile if row['unseen']],
+        'unseen_combinations': sorted({combination(row) for row in target if combination(row) not in familiar}),
+        'spikes': spikes,
     }

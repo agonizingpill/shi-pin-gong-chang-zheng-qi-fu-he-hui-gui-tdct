@@ -2,9 +2,10 @@ from redis.exceptions import RedisError
 from sqlalchemy import select
 
 from .auth import DomainError
+from .baselines import finalize, normalize
 from .config import QUEUE, redis, utc_now
 from .constants import PlanState, ReviewState, ShiftState
-from .models import EnergyReview, LoadPlan, ProductionShift, ReviewSpike
+from .models import EnergyReview, LoadPlan, PlanBaseline, ProductionShift, ReviewSpike
 from .shift_work import audit, capture_rows, get_shift
 from .steam_model import fingerprint
 
@@ -53,17 +54,76 @@ def get_plan(db, plan_id, lock=False):
     return plan
 
 
+def manual_baselines(db, plan_id):
+    rows = db.scalars(select(PlanBaseline).where(PlanBaseline.plan_id == plan_id).order_by(PlanBaseline.id))
+    return {row.end_read_id: row for row in rows}
+
+
+def plan_outcome(db, plan):
+    """The plan's hourly baselines with any supervisor confirmations merged in."""
+    if plan.result is None:
+        return None
+    manual = {key: {'baseline_kg': float(row.baseline_kg), 'note': row.note}
+              for key, row in manual_baselines(db, plan.id).items()}
+    return finalize(normalize(plan.result, plan.input_snapshot), manual)
+
+
+def set_manual_baseline(db, plan, end_read_id, data, user):
+    if plan.state == PlanState.APPROVED:
+        raise DomainError('baselines_locked', '方案已签批，核定值已随复核单锁定，不能再改')
+    if plan.state != PlanState.ESTIMATED or plan.result is None:
+        raise DomainError('plan_not_estimated', '只有完成估计的方案可以核定基线')
+    outcome = plan_outcome(db, plan)
+    if 'pending_count' not in outcome:
+        raise DomainError('plan_revision_legacy', '这个方案修订早于逐小时核定，请重新提交估计')
+    hour = next((row for row in outcome['profile'] if row['end_read_id'] == end_read_id), None)
+    if hour is None:
+        raise DomainError('baseline_hour_missing', '该时点不属于这个方案的估计曲线', 404)
+    if not hour['unseen']:
+        raise DomainError('combination_known', '这个设备组合在同线历史里出现过，沿用拟合基线即可')
+    existing = manual_baselines(db, plan.id).get(end_read_id)
+    previous = None if existing is None else float(existing.baseline_kg)
+    if existing is None:
+        existing = PlanBaseline(plan_id=plan.id, end_read_id=end_read_id)
+        db.add(existing)
+    existing.baseline_kg, existing.note = data.baseline_kg, data.note
+    existing.set_by, existing.set_at = user.id, utc_now()
+    db.flush()
+    audit(db, user.username, 'plan.baseline_set', plan.id, end_read_id=end_read_id,
+          baseline_kg=float(data.baseline_kg), reason=data.note, previous_kg=previous)
+    return existing
+
+
 def approve_plan(db, plan, user):
+    # Sign-off retries are idempotent: the sheet is keyed to the plan and the
+    # baseline set is whatever was locked the first time.
+    review = db.scalar(select(EnergyReview).where(EnergyReview.plan_id == plan.id).with_for_update())
+    if review is not None:
+        return review
     if plan.state != PlanState.ESTIMATED:
         raise DomainError('plan_not_estimated', '只有完成估计的方案可以审批')
+    outcome = plan_outcome(db, plan)
+    if 'pending_count' not in outcome:
+        raise DomainError('plan_revision_legacy', '这个方案修订早于逐小时核定，请重新提交估计')
+    if outcome['pending_count']:
+        raise DomainError('baselines_pending', '还有小时缺少核定值，补齐后才能出整班偏差并签批',
+                          pending_hours=outcome['pending_hours'])
     plan.state, plan.approved_by, plan.approved_at = PlanState.APPROVED, user.id, utc_now()
-    review = EnergyReview(plan_id=plan.id)
+    # Lock the complete, finalized baseline set onto the review sheet; later
+    # edits to plan.result or the manual table cannot move it.
+    review = EnergyReview(plan_id=plan.id, baselines={
+        'locked_at': utc_now().isoformat(), 'observed_kg': outcome['observed_kg'],
+        'baseline_kg': outcome['baseline_kg'], 'excess_kg': outcome['excess_kg'],
+        'pending_count': outcome['pending_count'], 'pending_hours': outcome['pending_hours'],
+        'profile': outcome['profile'],
+    })
     db.add(review)
     db.flush()
-    for flag in plan.result['spikes']:
+    for flag in outcome['spikes']:
         db.add(ReviewSpike(review_id=review.id, sample_scope=flag['scope'],
                            **{key: flag[key] for key in ('start_read_id', 'end_read_id', 'observed_kg', 'baseline_kg')}))
-    audit(db, user.username, 'plan.approved', plan.id, review_id=review.id, spike_count=len(plan.result['spikes']))
+    audit(db, user.username, 'plan.approved', plan.id, review_id=review.id,
+          spike_count=len(outcome['spikes']), pending_count=outcome['pending_count'])
     return review
 
 

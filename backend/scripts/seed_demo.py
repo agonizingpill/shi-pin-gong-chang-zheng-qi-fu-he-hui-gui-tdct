@@ -10,7 +10,7 @@ from src.auth import password_hash
 from src.config import Session
 from src.constants import Equipment, Line, PlanState, Role, ShiftState
 from src.models import EquipmentRun, LoadPlan, ProductionShift, SteamMeter, User
-from src.planning import approve_plan, request_plan
+from src.planning import approve_plan, plan_outcome, request_plan, set_manual_baseline
 from src.shift_work import capture_rows
 from src.steam_model import estimate
 from src.worker import write_evidence
@@ -39,6 +39,14 @@ def seed_shifts(db, operator):
             specs.append((retort, cip, blancher))
             increments.append(round(77 + 5.8 * retort + 3.3 * cip + 0.15 * blancher + rng.uniform(-7, 7)
                                     + (245 if index == 2 and hour == 4 else 0), 2))
+        if code == 'A-1121-B':
+            # Trial production left the blancher idle for two evening hours.
+            # That combination never appeared in the sealed history, so those
+            # hours stay blank until the supervisor confirms a baseline.
+            specs = [(retort, cip, 0 if hour in (4, 5) else blancher)
+                     for hour, (retort, cip, blancher) in enumerate(specs)]
+            increments = [round(77 + 5.8 * retort + 3.3 * cip + 0.15 * blancher + rng.uniform(-7, 7), 2)
+                          for retort, cip, blancher in specs]
         shift = db.scalar(select(ProductionShift).where(ProductionShift.code == code))
         if shift:
             last = shift
@@ -88,7 +96,10 @@ def seed():
         plan.state = PlanState.ESTIMATED
         plan.evidence_file = f'plan-{plan.id}-{uuid4().hex}.json'
         write_evidence(plan.evidence_file, plan.result)
-        approve_plan(db, plan, users[Role.SUPERVISOR])
+        # Trial-production hours with an unfamiliar combination stay blank; the
+        # supervisor confirms them on the plan page before sign-off.
+        if not plan.result.get('pending_count'):
+            approve_plan(db, plan, users[Role.SUPERVISOR])
 
 
 if __name__ == '__main__':
